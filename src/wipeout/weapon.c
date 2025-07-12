@@ -1,6 +1,7 @@
 #include "../mem.h"
 #include "../utils.h"
 #include "../system.h"
+#include "../platform.h"
 
 #include "track.h"
 #include "ship.h"
@@ -203,6 +204,14 @@ void weapons_update(void) {
 					particles_spawn(weapon->position, weapon->track_hit_particle, velocity, 256);
 				}
 				sfx_play_at(SFX_EXPLOSION_2, weapon->position, vec3(0,0,0), 1);
+				
+				// HD Rumble feedback for weapon track impact
+				#if defined(PLATFORM_SWITCH)
+				if (weapon->owner && weapon->owner->pilot == g.pilot) {
+					platform_rumble_strong_impact(0.7f);
+				}
+				#endif
+				
 				weapon->active = false;
 			}
 		}
@@ -248,6 +257,25 @@ void weapon_set_trajectory(weapon_t *self) {
 	self->angle = ship->angle;
 }
 
+void weapon_apply_smart_displacement(weapon_t *self, ship_t *target, float force) {
+	if (!save.smart_weapon_displacement) {
+		return;
+	}
+	
+	// Grant collision immunity to target ship to prevent running into each other
+	target->collision_immunity_timer = 1.5f; // 1.5 seconds of immunity
+	
+	vec3_t shooter_right = self->owner->dir_right;
+	vec3_t to_target = vec3_sub(target->position, self->owner->position);
+	
+	// Determine which side of the shooter the target is on
+	float side_dot = vec3_dot(to_target, shooter_right);
+	vec3_t sideways_push = vec3_mulf(shooter_right, side_dot > 0 ? force : -force);
+	
+	// Push target sideways to clear the racing line
+	target->position = vec3_add(target->position, sideways_push);
+}
+
 void weapon_follow_target(weapon_t *self) {
 	vec3_t angular_velocity = vec3(0, 0, 0);
 	if (self->target) {
@@ -280,6 +308,7 @@ ship_t *weapon_collides_with_ship(weapon_t *self) {
 				velocity = vec3_add(velocity, vec3_mulf(ship->velocity, 0.25));
 				particles_spawn(self->position, self->ship_hit_particle, velocity, 256);
 			}
+			
 			return ship;
 		}
 	}
@@ -383,9 +412,17 @@ void weapon_update_mine(weapon_t *self) {
 		sfx_play_at(SFX_EXPLOSION_1, self->position, vec3(0,0,0), 1);
 		self->active = false;
 		if (flags_not(ship->flags, SHIP_SHIELDED)) {
+			// Apply smart repositioning - push target sideways to clear racing line
+			weapon_apply_smart_displacement(self, ship, 160.0f);
+			
 			if (ship->pilot == g.pilot) {
 				ship->velocity = vec3_sub(ship->velocity, vec3_mulf(ship->velocity, 0.125));
 				camera_set_shake(&g.camera, CAMERA_SHAKE_LONG);
+				
+				// HD Rumble feedback for mine explosion
+				#if defined(PLATFORM_SWITCH)
+				platform_rumble_strong_impact(0.9f);
+				#endif
 			}
 			else {
 				ship->speed = ship->speed * 0.125;
@@ -431,11 +468,19 @@ void weapon_update_missile(weapon_t *self) {
 		self->active = false;
 
 		if (flags_not(ship->flags, SHIP_SHIELDED)) {
+			// Apply smart repositioning - push target sideways to clear racing line
+			weapon_apply_smart_displacement(self, ship, 256.0f);
+			
 			if (ship->pilot == g.pilot) {
 				ship->velocity = vec3_sub(ship->velocity, vec3_mulf(ship->velocity, 0.75));
 				ship->angular_velocity.z += rand_float(-0.1, 0.1);
 				ship->turn_rate_from_hit = rand_float(-0.1, 0.1);
 				camera_set_shake(&g.camera, CAMERA_SHAKE_LONG);
+				
+				// HD Rumble feedback for being hit by weapon
+				#if defined(PLATFORM_SWITCH)
+				platform_rumble_strong_impact(0.8f);
+				#endif
 			}
 			else {
 				ship->speed = ship->speed * 0.03125;
@@ -479,11 +524,19 @@ void weapon_update_rocket(weapon_t *self) {
 		self->active = false;
 
 		if (flags_not(ship->flags, SHIP_SHIELDED)) {
+			// Apply smart repositioning - push target sideways to clear racing line
+			weapon_apply_smart_displacement(self, ship, 192.0f);
+			
 			if (ship->pilot == g.pilot) {
 				ship->velocity = vec3_sub(ship->velocity, vec3_mulf(ship->velocity, 0.75));
 				ship->angular_velocity.z += rand_float(-0.1, 0.1);;
 				ship->turn_rate_from_hit = rand_float(-0.1, 0.1);;
 				camera_set_shake(&g.camera, CAMERA_SHAKE_LONG);
+				
+				// HD Rumble feedback for being hit by weapon
+				#if defined(PLATFORM_SWITCH)
+				platform_rumble_strong_impact(0.8f);
+				#endif
 			}
 			else {
 				ship->speed = ship->speed * 0.03125;
@@ -531,6 +584,9 @@ void weapon_update_ebolt(weapon_t *self) {
 		self->active = false;
 
 		if (flags_not(ship->flags, SHIP_SHIELDED)) {
+			// Apply smart repositioning - push target sideways to clear racing line
+			weapon_apply_smart_displacement(self, ship, 128.0f);
+			
 			flags_add(ship->flags, SHIP_ELECTROED);
 			ship->ebolt_timer = WEAPON_EBOLT_DURATION;
 		}

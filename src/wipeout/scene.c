@@ -135,12 +135,35 @@ void scene_draw(camera_t *camera) {
 		vec3_t diff = vec3_sub(cam_pos, object->origin);
 		float cam_dot = vec3_dot(diff, cam_dir);
 		float dist_sq = vec3_dot(diff, diff);
+		
+#ifdef PLATFORM_SWITCH
+		// Enhanced object culling for Nintendo Switch
+		float distance = sqrtf(dist_sq);
+		bool should_draw = (
+			cam_dot < object->radius && 
+			distance < RENDER_FADEOUT_FAR &&
+			distance > 50.0f // Don't render objects too close
+		);
+		
+		// Additional culling for distant objects
+		if (should_draw && distance > RENDER_SWITCH_LOD_DISTANCE) {
+			// More aggressive culling for distant objects
+			if (cam_dot > object->radius * 0.5f) {
+				should_draw = false;
+			}
+		}
+		
+		if (should_draw) {
+			object_draw(object, &object->mat);
+		}
+#else
 		if (
 			cam_dot < object->radius && 
 			dist_sq < (RENDER_FADEOUT_FAR * RENDER_FADEOUT_FAR)
 		) {
 			object_draw(object, &object->mat);
 		}
+#endif
 		object = object->next;
 	}
 }

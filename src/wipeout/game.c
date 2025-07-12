@@ -20,6 +20,7 @@
 #include "main_menu.h"
 #include "title.h"
 #include "intro.h"
+#include "../save_ini.h"
 
 #define TURN_ACCEL(V) NTSC_ACCELERATION(ANGLE_NORM_TO_RADIAN(FIXED_TO_FLOAT(YAW_VELOCITY(V))))
 #define TURN_VEL(V)   NTSC_VELOCITY(ANGLE_NORM_TO_RADIAN(FIXED_TO_FLOAT(YAW_VELOCITY(V))))
@@ -399,19 +400,24 @@ save_t save = {
 	.internal_roll = 0.6,
 	.screen_shake = 0.5,
 	.ui_scale = 0,
-	.show_fps = false,
+	.show_fps = true,
 	.fullscreen = false,
 	.screen_res = 0,
 	.post_effect = 0,
+
+	.less_punishing_ship_collisions = false,
+	.wall_grinding_mode = false,
+	.tunnel_reverb_enabled = true,
+	.smart_weapon_displacement = true,
 
 	.has_rapier_class = true,  // for testing; should be false in prod
 	.has_bonus_circuts = true, // for testing; should be false in prod
 
 	.buttons = {
-		[A_UP] = {INPUT_KEY_UP, INPUT_GAMEPAD_DPAD_UP},
-		[A_DOWN] = {INPUT_KEY_DOWN, INPUT_GAMEPAD_DPAD_DOWN},
-		[A_LEFT] = {INPUT_KEY_LEFT, INPUT_GAMEPAD_DPAD_LEFT},
-		[A_RIGHT] = {INPUT_KEY_RIGHT, INPUT_GAMEPAD_DPAD_RIGHT},
+		[A_UP] = {INPUT_KEY_UP, INPUT_GAMEPAD_L_STICK_UP},
+		[A_DOWN] = {INPUT_KEY_DOWN, INPUT_GAMEPAD_L_STICK_DOWN},
+		[A_LEFT] = {INPUT_KEY_LEFT, INPUT_GAMEPAD_L_STICK_LEFT},
+		[A_RIGHT] = {INPUT_KEY_RIGHT, INPUT_GAMEPAD_L_STICK_RIGHT},
 		[A_BRAKE_LEFT] = {INPUT_KEY_C, INPUT_GAMEPAD_L_SHOULDER},
 		[A_BRAKE_RIGHT] = {INPUT_KEY_V, INPUT_GAMEPAD_R_SHOULDER},
 		[A_THRUST] = {INPUT_KEY_X, INPUT_GAMEPAD_A},
@@ -505,17 +511,28 @@ static int global_textures_len = 0;
 static void *global_mem_mark = 0;
 
 void game_init(void) {
-	uint32_t size;
-	save_t *save_file = (save_t *)platform_load_userdata("save.dat", &size);
-	if (save_file) {
-		if (size == sizeof(save_t) && save_file->magic == SAVE_DATA_MAGIC) {
-			printf("load save data success\n");
-			memcpy(&save, save_file, sizeof(save_t));
+	// Try to load INI format first, fall back to binary format
+	bool loaded = save_load_ini(&save, save_get_ini_filename());
+	if (loaded) {
+		printf("loaded save data from INI format\n");
+	} else {
+		// Try legacy binary format
+		uint32_t size;
+		save_t *save_file = (save_t *)platform_load_userdata("save.dat", &size);
+		if (save_file) {
+			if (size == sizeof(save_t) && save_file->magic == SAVE_DATA_MAGIC) {
+				printf("loaded save data from legacy binary format\n");
+				memcpy(&save, save_file, sizeof(save_t));
+				// Convert to INI format
+				save.is_dirty = true; // Will trigger INI save on next update
+			}
+			else {
+				printf("unexpected size/magic for save data\n");
+			}
+			mem_temp_free(save_file);
+		} else {
+			printf("no save data found, using defaults\n");
 		}
-		else {
-			printf("unexpected size/magic for save data\n");
-		}
-		mem_temp_free(save_file);
 	}
 
 	platform_set_fullscreen(save.fullscreen);
@@ -580,6 +597,7 @@ void game_init(void) {
 
 	input_bind(INPUT_LAYER_SYSTEM, INPUT_GAMEPAD_A, A_MENU_SELECT);
 	input_bind(INPUT_LAYER_SYSTEM, INPUT_GAMEPAD_START, A_MENU_START);
+	input_bind(INPUT_LAYER_SYSTEM, INPUT_GAMEPAD_SELECT, A_MENU_QUIT);
 	
 
 	// User defined, loaded from the save struct
@@ -644,11 +662,12 @@ void game_update(void) {
 	}
 
 	if (save.is_dirty) {
-		// FIXME: use a text based format?
-		// FIXME: this should probably run async somewhere
 		save.is_dirty = false;
-		platform_store_userdata("save.dat", &save, sizeof(save_t));
-		printf("wrote save.dat\n");
+		if (save_write_ini(&save, save_get_ini_filename())) {
+			printf("wrote %s\n", save_get_ini_filename());
+		} else {
+			printf("failed to write %s\n", save_get_ini_filename());
+		}
 	}
 
 	double now = platform_now();

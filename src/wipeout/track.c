@@ -273,12 +273,41 @@ void track_draw(camera_t *camera) {
 		vec3_t diff = vec3_sub(cam_pos, s->center);
 		float cam_dot = vec3_dot(diff, cam_dir);
 		float dist_sq = vec3_dot(diff, diff);
+		
+#ifdef PLATFORM_SWITCH
+		// Enhanced culling for Nintendo Switch performance
+		float distance = sqrtf(dist_sq);
+		bool should_draw = (
+			cam_dot < 2048 && // Basic backface culling
+			distance < RENDER_FADEOUT_FAR && // Distance culling
+			distance > 100.0f // Avoid rendering sections too close (likely behind camera)
+		);
+		
+		// Additional Switch-specific optimizations
+		if (should_draw && distance > RENDER_SWITCH_LOD_DISTANCE) {
+			// Could implement LOD switching here for distant sections
+			// For now, just ensure we don't overdraw distant geometry
+			vec3_t cam_right = camera_right(camera);
+			float side_dot = fabs(vec3_dot(diff, cam_right));
+			if (side_dot > distance * 0.7f) { // Simple side culling
+				should_draw = false;
+			}
+		}
+		
+		if (should_draw) {
+			track_draw_section(s);
+			drawn++;
+		} else {
+			skipped++;
+		}
+#else
 		if (
 			cam_dot < 2048 && // FIXME: should use the bounding radius of the section
 			dist_sq < (RENDER_FADEOUT_FAR * RENDER_FADEOUT_FAR)
 		) {
 			track_draw_section(s);
 		}
+#endif
 	}
 }
 
@@ -321,6 +350,63 @@ track_face_t *track_section_get_base_face(section_t *section) {
 		face++;
 	}
 	return face;
+}
+
+track_face_t *track_get_nearest_face(section_t *section, vec3_t pos) {
+	if (!section) {
+		return NULL;
+	}
+
+	track_face_t *best_face = NULL;
+	float min_distance = 1e6f; // Large number
+	
+	// Check all faces in the current section
+	track_face_t *face = g.track.faces + section->face_start;
+	for (int i = 0; i < section->face_count; i++) {
+		// Skip track base faces (floor) for collision detection
+		if (flags_is(face->flags, FACE_TRACK_BASE)) {
+			face++;
+			continue;
+		}
+		
+		// Calculate distance from position to face plane
+		vec3_t face_point = face->tris[0].vertices[0].pos;
+		float distance = fabsf(vec3_distance_to_plane(pos, face_point, face->normal));
+		
+		// Check if this face is closer
+		if (distance < min_distance) {
+			min_distance = distance;
+			best_face = face;
+		}
+		
+		face++;
+	}
+	
+	// If we're in a junction, also check adjacent sections
+	if ((flags_is(section->flags, SECTION_JUNCTION_START) || 
+	     flags_is(section->flags, SECTION_JUNCTION_END)) && 
+	    section->junction) {
+		
+		track_face_t *junction_face = g.track.faces + section->junction->face_start;
+		for (int i = 0; i < section->junction->face_count; i++) {
+			if (flags_is(junction_face->flags, FACE_TRACK_BASE)) {
+				junction_face++;
+				continue;
+			}
+			
+			vec3_t face_point = junction_face->tris[0].vertices[0].pos;
+			float distance = fabsf(vec3_distance_to_plane(pos, face_point, junction_face->normal));
+			
+			if (distance < min_distance) {
+				min_distance = distance;
+				best_face = junction_face;
+			}
+			
+			junction_face++;
+		}
+	}
+	
+	return best_face;
 }
 
 section_t *track_nearest_section(vec3_t pos, vec3_t bias, section_t *section, float *distance) {

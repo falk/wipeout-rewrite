@@ -83,6 +83,7 @@ void race_update(void) {
 		weapons_update();
 		particles_update();
 		scene_update();
+		sfx_update_reverb();
 		if (g.race_type != RACE_TYPE_TIME_TRIAL) {
 			track_cycle_pickups();
 		}
@@ -99,11 +100,14 @@ void race_update(void) {
 		else if (active_menu == NULL && (input_pressed(A_MENU_START) || input_pressed(A_MENU_QUIT))) {
 			race_pause();
 		}
+		else if (active_menu == NULL && input_pressed(A_MENU_SELECT)) {
+			sfx_music_next();
+		}
 	}
 
 
 	// Draw 3D
-	render_set_view(g.camera.position, g.camera.angle);
+	render_set_view_with_fov(g.camera.position, g.camera.angle, g.camera.fov);
 	render_set_screen_position(g.camera.shake);
 
 	render_set_cull_backface(false);

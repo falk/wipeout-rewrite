@@ -124,6 +124,13 @@ typedef struct ship_t {
 
 	float update_timer;
 	float last_impact_time;
+	float collision_immunity_timer;
+
+	// Boost FOV effect
+	float boost_fov_timer;
+
+	// Engine trail particles
+	float engine_trail_timer;
 
 	mat4_t mat;
 	Object *model;

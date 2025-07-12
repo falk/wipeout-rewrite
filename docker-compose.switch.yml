@@ -1,0 +1,18 @@
+
+services:
+  switch-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.switch
+    volumes:
+      - .:/src
+      - switch-build-cache:/src/build
+    environment:
+      - DEVKITPRO=/opt/devkitpro
+      - DEVKITARM=/opt/devkitpro/devkitARM
+      - DEVKITA64=/opt/devkitpro/devkitA64
+    working_dir: /src
+    command: bash -c "cmake -S . -B build -DPLATFORM=SWITCH -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake && cmake --build build"
+
+volumes:
+  switch-build-cache:

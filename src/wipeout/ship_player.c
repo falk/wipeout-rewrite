@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "../mem.h"
+#include "../platform.h"
 #include "object.h"
 #include "track.h"
 #include "ship.h"
@@ -152,6 +153,11 @@ void ship_player_update_race(ship_t *self) {
 		self->ebolt_timer -= system_tick();
 	}
 
+	// Update boost FOV timer
+	if (self->boost_fov_timer > 0) {
+		self->boost_fov_timer -= system_tick();
+	}
+
 	if (self->ebolt_timer <= 0) {
 		flags_rm(self->flags, SHIP_ELECTROED);
 	}
@@ -251,6 +257,12 @@ void ship_player_update_race(ship_t *self) {
 	// Brake
 	if (input_state(A_BRAKE_RIGHT))	{
 		self->brake_right += SHIP_BRAKE_RATE * system_tick();
+		
+		// HD Rumble feedback for right brake
+		#if defined(PLATFORM_SWITCH)
+		float brake_intensity = min(self->brake_right / 256.0f, 0.4f);
+		platform_rumble_impact(brake_intensity, false); // Right side
+		#endif
 	}
 	else if (self->brake_right > 0) {
 		self->brake_right -= SHIP_BRAKE_RATE * system_tick();
@@ -259,6 +271,12 @@ void ship_player_update_race(ship_t *self) {
 
 	if (input_state(A_BRAKE_LEFT))	{
 		self->brake_left += SHIP_BRAKE_RATE * system_tick();
+		
+		// HD Rumble feedback for left brake
+		#if defined(PLATFORM_SWITCH)
+		float brake_intensity = min(self->brake_left / 256.0f, 0.4f);
+		platform_rumble_impact(brake_intensity, true); // Left side
+		#endif
 	}
 	else if (self->brake_left > 0) {
 		self->brake_left -= SHIP_BRAKE_RATE * system_tick();
@@ -346,6 +364,8 @@ void ship_player_update_race(ship_t *self) {
 		if (flags_not(self->flags, SHIP_SPECIALED) && flags_is(face->flags, FACE_BOOST)) {
 			vec3_t track_direction = vec3_sub(self->section->next->center, self->section->center);
 			self->velocity = vec3_add(self->velocity, vec3_mulf(track_direction, 30 * system_tick()));
+			// Trigger FOV boost effect
+			self->boost_fov_timer = 1.0f; // 1 second boost effect
 		}
 
 		vec3_t face_point = face->tris[0].vertices[0].pos;
@@ -356,6 +376,12 @@ void ship_player_update_race(ship_t *self) {
 			if (self->last_impact_time > 0.2) {
 				self->last_impact_time = 0;
 				sfx_play_at(SFX_IMPACT, self->position, vec3(0,0,0), 1);
+				
+				// HD Rumble feedback for floor impact
+				#if defined(PLATFORM_SWITCH)
+				float impact_intensity = min(self->speed / 1000.0f, 1.0f);
+				platform_rumble_strong_impact(impact_intensity);
+				#endif
 			}
 			self->velocity = vec3_reflect(self->velocity, face->normal, 2);
 			self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.125));

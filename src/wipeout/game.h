@@ -248,6 +248,12 @@ typedef struct {
 	int post_effect;
 	float screen_shake;
 
+	bool less_punishing_ship_collisions;
+	bool wall_grinding_mode;
+	bool tunnel_reverb_enabled;
+	bool smart_weapon_displacement;
+	bool engine_trails;
+
 	uint32_t has_rapier_class;
 	uint32_t has_bonus_circuts;
 	

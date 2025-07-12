@@ -50,6 +50,12 @@ static sfx_t *nodes;
 static music_decoder_t *music;
 static void (*external_mix_cb)(float *, uint32_t len) = NULL;
 
+// Reverb system
+static float reverb_buffer_left[SFX_REVERB_BUFFER_SIZE];
+static float reverb_buffer_right[SFX_REVERB_BUFFER_SIZE];
+static uint32_t reverb_write_pos = 0;
+static float current_reverb_amount = 0.0f;
+
 void sfx_load(void) {
 	// Init decode buffer for music
 	uint32_t channels = 2;
@@ -301,6 +307,14 @@ void sfx_music_mode(sfx_music_mode_t mode) {
 	music->mode = mode;
 }
 
+void sfx_music_next(void) {
+	if (music->mode == SFX_MUSIC_PAUSED) {
+		return; // Don't skip if music is paused
+	}
+	uint32_t next_index = (music->track_index + 1) % len(def.music);
+	sfx_music_play(next_index);
+}
+
 
 
 
@@ -309,6 +323,26 @@ void sfx_music_mode(sfx_music_mode_t mode) {
 
 void sfx_set_external_mix_cb(void (*cb)(float *, uint32_t len)) {
 	external_mix_cb = cb;
+}
+
+void sfx_update_reverb(void) {
+	if (!save.tunnel_reverb_enabled) {
+		current_reverb_amount = 0.0f;
+		return;
+	}
+
+	// Check if player ship is in a tunnel (face_count > 4 indicates enclosed area)
+	if (g.pilot >= 0 && g.pilot < len(g.ships)) {
+		section_t *current_section = g.ships[g.pilot].section;
+		if (current_section && current_section->face_count > 4) {
+			// Gradually increase reverb in tunnels
+			float target_reverb = clamp((current_section->face_count - 4) / 6.0f, 0.0f, 0.6f);
+			current_reverb_amount += (target_reverb - current_reverb_amount) * 0.02f; // Smooth transition
+		} else {
+			// Gradually decrease reverb in open areas
+			current_reverb_amount += (0.0f - current_reverb_amount) * 0.05f; // Faster fade out
+		}
+	}
 }
 
 void sfx_stero_mix(float *buffer, uint32_t len) {
@@ -385,6 +419,25 @@ void sfx_stero_mix(float *buffer, uint32_t len) {
 			left += (music->sample_data[music_src_index++] / 32768.0) * save.music_volume;
 			right += (music->sample_data[music_src_index++] / 32768.0) * save.music_volume;
 			music->sample_data_pos++;
+		}
+
+		// Apply reverb if enabled
+		if (current_reverb_amount > 0.001f) {
+			// Read delayed samples from reverb buffer
+			uint32_t read_pos = (reverb_write_pos + SFX_REVERB_BUFFER_SIZE - SFX_REVERB_DELAY_SAMPLES) % SFX_REVERB_BUFFER_SIZE;
+			float reverb_left = reverb_buffer_left[read_pos];
+			float reverb_right = reverb_buffer_right[read_pos];
+			
+			// Mix reverb back into output
+			left += reverb_left * current_reverb_amount * 0.4f;
+			right += reverb_right * current_reverb_amount * 0.4f;
+			
+			// Store current samples with decay in reverb buffer
+			reverb_buffer_left[reverb_write_pos] = left * 0.6f;
+			reverb_buffer_right[reverb_write_pos] = right * 0.6f;
+			
+			// Advance write position
+			reverb_write_pos = (reverb_write_pos + 1) % SFX_REVERB_BUFFER_SIZE;
 		}
 
 		buffer[i+0] = left;

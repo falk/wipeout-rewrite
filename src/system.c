@@ -29,7 +29,7 @@ void system_exit(void) {
 	platform_exit();
 }
 
-void system_update(void) {
+void system_update(double delta_time) {
 	double time_real_now = platform_now();
 	double real_delta = time_real_now - time_real;
 	time_real = time_real_now;

@@ -19,6 +19,12 @@
 	#define GL3_PROTOTYPES 1
 	#include <GL/glew.h>
 	#include <GL/gl.h>
+
+// Nintendo Switch
+#elif defined(PLATFORM_SWITCH)
+	#include <EGL/egl.h>
+	#include <EGL/eglext.h>
+	#include <glad/glad.h>
 #endif
 
 
@@ -296,6 +302,68 @@ static const char * const SHADER_POST_FS_CRT = SHADER_SOURCE(
 	}
 );
 
+// D_REP post-processing effect (Designers Republic style)
+static const char * const SHADER_POST_FS_D_REP = SHADER_SOURCE(
+	varying vec2 v_uv;
+
+	uniform sampler2D texture;
+	uniform vec2 screen_size;
+	uniform float time;
+
+	// Sobel edge detection kernel
+	vec3 sobel_edge_detect(vec2 uv, vec2 texel_size) {
+		vec3 tl = texture2D(texture, uv + vec2(-texel_size.x, -texel_size.y)).rgb;
+		vec3 tm = texture2D(texture, uv + vec2(0.0, -texel_size.y)).rgb;
+		vec3 tr = texture2D(texture, uv + vec2(texel_size.x, -texel_size.y)).rgb;
+		vec3 ml = texture2D(texture, uv + vec2(-texel_size.x, 0.0)).rgb;
+		vec3 mm = texture2D(texture, uv).rgb;
+		vec3 mr = texture2D(texture, uv + vec2(texel_size.x, 0.0)).rgb;
+		vec3 bl = texture2D(texture, uv + vec2(-texel_size.x, texel_size.y)).rgb;
+		vec3 bm = texture2D(texture, uv + vec2(0.0, texel_size.y)).rgb;
+		vec3 br = texture2D(texture, uv + vec2(texel_size.x, texel_size.y)).rgb;
+
+		vec3 sobel_x = tl + 2.0 * ml + bl - tr - 2.0 * mr - br;
+		vec3 sobel_y = tl + 2.0 * tm + tr - bl - 2.0 * bm - br;
+
+		vec3 sobel = sqrt(sobel_x * sobel_x + sobel_y * sobel_y);
+		return sobel;
+	}
+
+	// Color quantization function
+	vec3 quantize_color(vec3 color, float levels) {
+		return floor(color * levels + 0.5) / levels;
+	}
+
+	void main() {
+		vec2 texel_size = 1.0 / screen_size;
+		vec3 original_color = texture2D(texture, v_uv).rgb;
+		
+		// Apply color quantization (reduce color palette)
+		vec3 quantized_color = quantize_color(original_color, 8.0);
+		
+		// Edge detection
+		vec3 edge = sobel_edge_detect(v_uv, texel_size);
+		float edge_strength = length(edge);
+		
+		// Create outline effect
+		float outline_threshold = 0.3;
+		float outline_factor = 1.0 - smoothstep(outline_threshold, outline_threshold + 0.1, edge_strength);
+		
+		// Apply cel-shading: mix quantized color with black outlines
+		vec3 cel_color = quantized_color * outline_factor;
+		
+		// Add slight brightness boost to maintain vibrancy
+		cel_color = pow(cel_color, vec3(0.9));
+		cel_color *= 1.1;
+		
+		// Add subtle color temperature adjustment for stylistic effect
+		cel_color.r *= 1.05;
+		cel_color.b *= 0.95;
+		
+		gl_FragColor = vec4(cel_color, 1.0);
+	}
+);
+
 typedef struct {
 	GLuint program;
 	GLuint vao;
@@ -338,6 +406,13 @@ prg_post_t *shader_post_default_init(void) {
 prg_post_t *shader_post_crt_init(void) {
 	prg_post_t *s = mem_bump(sizeof(prg_post_t));
 	s->program = create_program(SHADER_POST_VS, SHADER_POST_FS_CRT);	
+	shader_post_general_init(s);
+	return s;
+}
+
+prg_post_t *shader_post_d_rep_init(void) {
+	prg_post_t *s = mem_bump(sizeof(prg_post_t));
+	s->program = create_program(SHADER_POST_VS, SHADER_POST_FS_D_REP);	
 	shader_post_general_init(s);
 	return s;
 }
@@ -390,6 +465,9 @@ void render_init(vec2i_t screen_size) {
 	#if defined(__APPLE__) && defined(__MACH__)
 		// OSX
 		// (nothing to do here)
+	#elif defined(PLATFORM_SWITCH)
+		// Nintendo Switch
+		// GLAD is already initialized in platform_switch.c
 	#else
 		// Windows, Linux
 		glewExperimental = GL_TRUE;
@@ -410,9 +488,11 @@ void render_init(vec2i_t screen_size) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+	#if !defined(PLATFORM_SWITCH) && !defined(__EMSCRIPTEN__) && !defined(USE_GLES2)
 	float anisotropy = 0;
 	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &anisotropy);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
+	#endif
 
 	uint32_t tw = ATLAS_SIZE * ATLAS_GRID;
 	uint32_t th = ATLAS_SIZE * ATLAS_GRID;
@@ -430,6 +510,7 @@ void render_init(vec2i_t screen_size) {
 
 	prg_post_effects[RENDER_POST_NONE] = shader_post_default_init();
 	prg_post_effects[RENDER_POST_CRT] = shader_post_crt_init();
+	prg_post_effects[RENDER_POST_D_REP] = shader_post_d_rep_init();
 	render_set_post_effect(RENDER_POST_NONE);
 
 	// Game shader
@@ -639,6 +720,10 @@ void render_flush(void) {
 
 
 void render_set_view(vec3_t pos, vec3_t angles) {
+	render_set_view_with_fov(pos, angles, (73.75 / 180.0) * M_PI);
+}
+
+void render_set_view_with_fov(vec3_t pos, vec3_t angles, float fov) {
 	render_flush();
 	render_set_depth_write(true);
 	render_set_depth_test(true);
@@ -651,9 +736,20 @@ void render_set_view(vec3_t pos, vec3_t angles) {
 
 	render_set_model_mat(&mat4_identity());
 
+	// Create dynamic projection matrix with custom FOV
+	float aspect = (float)backbuffer_size.x / (float)backbuffer_size.y;
+	float f = 1.0 / tan(fov / 2);
+	float nf = 1.0 / (NEAR_PLANE - FAR_PLANE);
+	mat4_t custom_projection = mat4(
+		f / aspect, 0, 0, 0,
+		0, f, 0, 0, 
+		0, 0, (FAR_PLANE + NEAR_PLANE) * nf, -1, 
+		0, 0, (2 * FAR_PLANE * NEAR_PLANE) * nf, 0
+	);
+
 	render_flush();
 	glUniformMatrix4fv(prg_game->uniform.view, 1, false, view_mat.m);
-	glUniformMatrix4fv(prg_game->uniform.projection, 1, false, projection_mat_3d.m);
+	glUniformMatrix4fv(prg_game->uniform.projection, 1, false, custom_projection.m);
 	glUniform3f(prg_game->uniform.camera_pos, pos.x, pos.y, pos.z);
 	glUniform2f(prg_game->uniform.fade, RENDER_FADEOUT_NEAR, RENDER_FADEOUT_FAR);
 }

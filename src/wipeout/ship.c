@@ -1,6 +1,7 @@
 #include "../mem.h"
 #include "../utils.h"
 #include "../system.h"
+#include "../platform.h"
 
 #include "object.h"
 #include "scene.h"
@@ -15,6 +16,7 @@
 #include "game.h"
 #include "race.h"
 #include "sfx.h"
+#include "particle.h"
 
 void ships_load(void) {
 	texture_list_t ship_textures = image_get_compressed_textures("wipeout/common/allsh.cmp");
@@ -212,11 +214,14 @@ void ship_init(ship_t *self, section_t *section, int pilot, int inv_start_rank) 
 	self->ebolt_timer = 0;
 	self->revcon_timer = 0;
 	self->special_timer = 0;
+	self->boost_fov_timer = 0;
+	self->engine_trail_timer = 0;
 	self->weapon_target = NULL;
 	self->mat = mat4_identity();
 
 	self->update_timer = 0;
 	self->last_impact_time = 0;
+	self->collision_immunity_timer = 0;
 
 	int team = def.pilots[pilot].team;
 	self->mass =          def.teams[team].attributes[g.race_class].mass;
@@ -408,7 +413,15 @@ void ship_reset_exhaust_plume(ship_t* self)
 
 
 void ship_draw(ship_t *self) {
-	object_draw(self->model, &self->mat);
+	// Apply visual feedback for collision immunity
+	if (self->collision_immunity_timer > 0) {
+		// Make ship slightly transparent and use lighter blend mode
+		render_set_blend_mode(RENDER_BLEND_LIGHTER);
+		object_draw(self->model, &self->mat);
+		render_set_blend_mode(RENDER_BLEND_NORMAL);
+	} else {
+		object_draw(self->model, &self->mat);
+	}
 }
 
 void ship_draw_shadow(ship_t *self) {	
@@ -555,6 +568,43 @@ void ship_update(ship_t *self) {
 		}
 	}
 
+	// Engine trail particles (similar to Wipeout 3)
+	if (save.engine_trails && self->speed > 500) {
+		self->engine_trail_timer += system_tick();
+		
+		// Higher particle rate when moving faster or thrusting
+		float base_rate = 0.03f; // 33 particles per second
+		float speed_factor = clamp(self->speed / 2000.0f, 0.5f, 2.0f);
+		float thrust_factor = clamp(self->thrust_mag / 1000.0f, 0.5f, 1.5f);
+		float particle_rate = base_rate / (speed_factor * thrust_factor);
+		
+		while (self->engine_trail_timer > particle_rate) {
+			// Calculate engine position (behind the ship)
+			vec3_t engine_pos = vec3_add(self->position, vec3_mulf(self->dir_forward, -1600));
+			engine_pos = vec3_add(engine_pos, vec3_mulf(self->dir_up, -150));
+			
+			// Add some randomness to the position for more realistic spread
+			engine_pos.x += rand_float(-80, 80);
+			engine_pos.y += rand_float(-40, 40);
+			engine_pos.z += rand_float(-80, 80);
+			
+			// Particle velocity - mostly backwards with some spread
+			vec3_t velocity = vec3_mulf(self->dir_forward, -self->speed * 0.4f);
+			velocity.x += rand_float(-150, 150);
+			velocity.y += rand_float(-75, 75);
+			velocity.z += rand_float(-150, 150);
+			
+			// Vary particle size based on speed and thrust
+			float particle_size = 48 + (self->speed * 0.02f) + (self->thrust_mag * 0.05f);
+			particle_size = clamp(particle_size, 32, 96);
+			
+			// Spawn engine trail particle
+			particles_spawn(engine_pos, PARTICLE_TYPE_SMOKE, velocity, particle_size);
+			
+			self->engine_trail_timer -= particle_rate;
+		}
+	}
+
 	mat4_set_translation(&self->mat, self->position);
 	mat4_set_yaw_pitch_roll(&self->mat, self->angle);
 
@@ -599,6 +649,11 @@ void ship_update(ship_t *self) {
 		section_num_from_line += g.track.section_count;
 	}
 	self->total_section_num = self->lap * g.track.section_count + section_num_from_line;
+	
+	// Update collision immunity timer
+	if (self->collision_immunity_timer > 0) {
+		self->collision_immunity_timer -= system_tick();
+	}
 }
 
 vec3_t ship_cockpit(ship_t *self) {
@@ -637,12 +692,27 @@ static bool vec3_is_on_face(vec3_t pos, track_face_t *face, float alpha) {
 void ship_resolve_wing_collision(ship_t *self, track_face_t *face, float direction) {
 	vec3_t collision_vector = vec3_sub(self->section->center, face->tris[0].vertices[2].pos);
 	float angle = vec3_angle(collision_vector, self->dir_forward);
-	self->velocity = vec3_reflect(self->velocity, face->normal, 2);
-	self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.015625)); // system_tick?
-	self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.5));
-	self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 4096.0)); // div by 4096?
+	
+	if (save.wall_grinding_mode) {
+		// Wall grinding: reduce bounce, allow sliding along walls
+		self->velocity = vec3_reflect(self->velocity, face->normal, 1.2f); // Reduced from 2 to 1.2
+		self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.01f)); // Reduced position correction
+		self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.2f)); // Reduced velocity loss from 0.5 to 0.2
+		self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 2048.0f)); // Reduced push force from 4096 to 2048
+	} else {
+		// Original physics
+		self->velocity = vec3_reflect(self->velocity, face->normal, 2);
+		self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.015625)); // system_tick?
+		self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.5));
+		self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 4096.0)); // div by 4096?
+	}
 
 	float magnitude = (fabsf(angle) * self->speed) * 2 * M_PI / 4096.0; // (6 velocity shift, 12 angle shift?)
+	
+	// Reduce angular disruption for wall grinding
+	if (save.wall_grinding_mode) {
+		magnitude *= 0.4f; // Reduce angular impact
+	}
 
 	vec3_t wing_pos;
 	if (direction > 0) {
@@ -657,6 +727,12 @@ void ship_resolve_wing_collision(ship_t *self, track_face_t *face, float directi
 	if (self->last_impact_time > 0.2) {
 		self->last_impact_time = 0;
 		sfx_play_at(SFX_IMPACT, wing_pos, vec3(0, 0, 0), 1);
+		
+		// HD Rumble feedback for wing collision
+		#if defined(PLATFORM_SWITCH)
+		float impact_intensity = min(self->speed / 2000.0f, 1.0f); // Scale by speed
+		platform_rumble_impact(impact_intensity, direction > 0);
+		#endif
 	}
 }
 
@@ -664,12 +740,28 @@ void ship_resolve_wing_collision(ship_t *self, track_face_t *face, float directi
 void ship_resolve_nose_collision(ship_t *self, track_face_t *face, float direction) {
 	vec3_t collision_vector = vec3_sub(self->section->center, face->tris[0].vertices[2].pos);
 	float angle = vec3_angle(collision_vector, self->dir_forward);
-	self->velocity = vec3_reflect(self->velocity, face->normal, 2);
-	self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.015625)); // system_tick?
-	self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.5));
-	self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 4096)); // div by 4096?
+	
+	if (save.wall_grinding_mode) {
+		// Wall grinding: reduce bounce, allow sliding along walls
+		self->velocity = vec3_reflect(self->velocity, face->normal, 1.3f); // Reduced from 2 to 1.3
+		self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.01f)); // Reduced position correction
+		self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.25f)); // Reduced velocity loss from 0.5 to 0.25
+		self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 2560.0f)); // Reduced push force from 4096 to 2560
+	} else {
+		// Original physics
+		self->velocity = vec3_reflect(self->velocity, face->normal, 2);
+		self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.015625)); // system_tick?
+		self->velocity = vec3_sub(self->velocity, vec3_mulf(self->velocity, 0.5));
+		self->velocity = vec3_add(self->velocity, vec3_mulf(face->normal, 4096)); // div by 4096?
+	}
 
 	float magnitude = ((self->speed * 0.0625) + 400) * 2 * M_PI / 4096.0;
+	
+	// Reduce angular disruption for wall grinding
+	if (save.wall_grinding_mode) {
+		magnitude *= 0.5f; // Reduce angular impact
+	}
+	
 	if (direction > 0) {
 		self->angular_velocity.y += magnitude;
 	}
@@ -680,6 +772,12 @@ void ship_resolve_nose_collision(ship_t *self, track_face_t *face, float directi
 	if (self->last_impact_time > 0.2) {
 		self->last_impact_time = 0;
 		sfx_play_at(SFX_IMPACT, ship_nose(self), vec3(0, 0, 0), 1);
+		
+		// HD Rumble feedback for nose collision
+		#if defined(PLATFORM_SWITCH)
+		float impact_intensity = min(self->speed / 1500.0f, 1.0f); // Nose impacts are stronger
+		platform_rumble_strong_impact(impact_intensity);
+		#endif
 	}
 }
 
@@ -707,167 +805,35 @@ void ship_collide_with_track(ship_t *self, track_face_t *face) {
 
 	face--;
 
-	// Check against left hand side of track
-	
-	// FIXME: the collision checks in junctions are very flakey and often select
-	// the wrong face to test for a collision.
-	// Instead of this whole mess here, there should just be a function 
-	// `track_get_nearest_face(section, pos)` that we call with the nose and 
-	// wing positions and then just resolve against this face.
-
-	if (to_face > 0) {
-		flags_add(self->flags, SHIP_LEFT_SIDE);
-		
-		vec3_t face_point = face->tris[0].vertices[0].pos;
-
-		alpha = vec3_distance_to_plane(ship_nose(self), face_point, face->normal);
+	// Use proper face detection for collision checks
+	// Check nose collision
+	track_face_t *nose_face = track_get_nearest_face(self->section, ship_nose(self));
+	if (nose_face) {
+		vec3_t face_point = nose_face->tris[0].vertices[0].pos;
+		alpha = vec3_distance_to_plane(ship_nose(self), face_point, nose_face->normal);
 		if (alpha <= 0) {
-			if (flags_is(self->section->flags, SECTION_JUNCTION_START)) {
-				collide = vec3_is_on_face(ship_nose(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, -down_track);
-				}
-				else {
-					face2 = g.track.faces + self->section->next->face_start;
-					collide = vec3_is_on_face(ship_nose(self), face2, alpha);
-					if (collide) {
-						ship_resolve_nose_collision(self, face, -down_track);
-					}
-				}
-			}
-			else if (flags_is(self->section->flags, SECTION_JUNCTION_END)) {
-				collide = vec3_is_on_face(ship_nose(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, -down_track);
-				}
-				else {
-					face2 = g.track.faces + self->section->prev->face_start;
-					collide = vec3_is_on_face(ship_nose(self), face2, alpha);
-					if (collide) {
-						ship_resolve_nose_collision(self, face, -down_track);
-					}
-				}
-			}
-			else {
-				ship_resolve_nose_collision(self, face, -down_track);
-			}
-			return;
-		}
-
-		alpha = vec3_distance_to_plane(ship_wing_left(self), face_point, face->normal);
-		if (alpha <= 0) {
-			if (
-				flags_is(self->section->flags, SECTION_JUNCTION_START) || 
-				flags_is(self->section->flags, SECTION_JUNCTION_END)
-			) {
-				collide = vec3_is_on_face(ship_wing_left(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, -down_track);
-				}
-			}
-			else {
-				ship_resolve_wing_collision(self, face, -down_track);
-			}
-			return;
-		}
-
-		alpha = vec3_distance_to_plane(ship_wing_right(self), face_point, face->normal);
-		if (alpha <= 0) {
-			if (
-				flags_is(self->section->flags, SECTION_JUNCTION_START) || 
-				flags_is(self->section->flags, SECTION_JUNCTION_END)
-			) {
-				collide = vec3_is_on_face(ship_wing_right(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, -down_track);
-				}
-			}
-			else {
-				ship_resolve_wing_collision(self, face, -down_track);
-			}
+			ship_resolve_nose_collision(self, nose_face, down_track);
 			return;
 		}
 	}
 
-
-	// Collision check against 2nd wall
-	else {
-		flags_rm(self->flags, SHIP_LEFT_SIDE);
-
-		face++;
-		while (face->flags & FACE_TRACK_BASE) {
-			face++;
-		}
-
-		vec3_t face_point = face->tris[0].vertices[0].pos;
-
-		alpha = vec3_distance_to_plane(ship_nose(self), face_point, face->normal);
+	// Check wing collisions
+	track_face_t *left_wing_face = track_get_nearest_face(self->section, ship_wing_left(self));
+	if (left_wing_face) {
+		vec3_t face_point = left_wing_face->tris[0].vertices[0].pos;
+		alpha = vec3_distance_to_plane(ship_wing_left(self), face_point, left_wing_face->normal);
 		if (alpha <= 0) {
-			if (flags_is(self->section->flags, SECTION_JUNCTION_START)) {
-				collide = vec3_is_on_face(ship_nose(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, down_track);
-				}
-				else {
-					face2 = g.track.faces + self->section->next->face_start;
-					face2 += 3;
-					collide = vec3_is_on_face(ship_nose(self), face2, alpha);
-					if (collide) {
-						ship_resolve_nose_collision(self, face, -down_track);
-					}
-				}
-			}
-			else if (flags_is(self->section->flags, SECTION_JUNCTION_END)) {
-				collide = vec3_is_on_face(ship_nose(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, -down_track);
-				}
-				else {
-					face2 = g.track.faces + self->section->prev->face_start;
-					face2 += 3;
-					collide = vec3_is_on_face(ship_nose(self), face2, alpha);
-					if (collide) {
-						ship_resolve_nose_collision(self, face2, -down_track);
-					}
-				}
-			}
-			else {
-				ship_resolve_nose_collision(self, face, down_track);
-			}
+			ship_resolve_wing_collision(self, left_wing_face, down_track);
 			return;
 		}
-		
-		alpha = vec3_distance_to_plane(ship_wing_left(self), face_point, face->normal);
-		if (alpha <= 0) {
-			if (
-				flags_is(self->section->flags, SECTION_JUNCTION_START) ||
-				flags_is(self->section->flags, SECTION_JUNCTION_END)
-			) {
-				collide = vec3_is_on_face(ship_wing_left(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, down_track);
-				}
-			}
-			else {
-				ship_resolve_wing_collision(self, face, down_track);
-			}
-			return;
-		}
+	}
 
-		alpha = vec3_distance_to_plane(ship_wing_right(self), face_point, face->normal);
+	track_face_t *right_wing_face = track_get_nearest_face(self->section, ship_wing_right(self));
+	if (right_wing_face) {
+		vec3_t face_point = right_wing_face->tris[0].vertices[0].pos;
+		alpha = vec3_distance_to_plane(ship_wing_right(self), face_point, right_wing_face->normal);
 		if (alpha <= 0) {
-			if (
-				flags_is(self->section->flags, SECTION_JUNCTION_START) ||
-				flags_is(self->section->flags, SECTION_JUNCTION_END)
-			) {
-				collide = vec3_is_on_face(ship_wing_right(self), face, alpha);
-				if (collide) {
-					ship_resolve_nose_collision(self, face, down_track);
-				}
-			}
-			else {
-				ship_resolve_wing_collision(self, face, down_track);
-			}
+			ship_resolve_wing_collision(self, right_wing_face, down_track);
 			return;
 		}
 	}
@@ -982,6 +948,11 @@ void ship_collide_with_ship(ship_t *self, ship_t *other) {
 		return;
 	}
 
+	// Check for collision immunity - if either ship is immune, skip collision
+	if (self->collision_immunity_timer > 0 || other->collision_immunity_timer > 0) {
+		return;
+	}
+
 	// Ships are close, do a real collision test
 	if (!ship_intersects_ship(self, other)) {
 		return;
@@ -997,8 +968,12 @@ void ship_collide_with_ship(ship_t *self, ship_t *other) {
 		self->mass + other->mass
 	);
 
-	vec3_t ship_react = vec3_mulf(vec3_sub(vc, self->velocity), 0.5); // >> 1
-	vec3_t other_react = vec3_mulf(vec3_sub(vc, other->velocity), 0.5); // >> 1
+	// Apply less punishing physics if enabled
+	float reaction_force = save.less_punishing_ship_collisions ? 0.25f : 0.5f; // Reduced from 0.5 to 0.25
+	float separation_force = save.less_punishing_ship_collisions ? 2.0f : 4.0f; // Reduced from 4 to 2
+	
+	vec3_t ship_react = vec3_mulf(vec3_sub(vc, self->velocity), reaction_force);
+	vec3_t other_react = vec3_mulf(vec3_sub(vc, other->velocity), reaction_force);
 	self->position = vec3_sub(self->position, vec3_mulf(self->velocity, 0.015625)); // >> 6
 	other->position = vec3_sub(other->position, vec3_mulf(other->velocity, 0.015625)); // >> 6
 
@@ -1007,10 +982,10 @@ void ship_collide_with_ship(ship_t *self, ship_t *other) {
 
 	vec3_t res = vec3_sub(self->position, other->position);
 
-	self->velocity = vec3_add(self->velocity, vec3_mulf(res, 4));  // << 2
+	self->velocity = vec3_add(self->velocity, vec3_mulf(res, separation_force));
 	self->position = vec3_add(self->position, vec3_mulf(self->velocity, 0.015625)); // >> 6
 
-	other->velocity = vec3_sub(other->velocity, vec3_mulf(res, 4)); // << 2
+	other->velocity = vec3_sub(other->velocity, vec3_mulf(res, separation_force));
 	other->position = vec3_add(other->position, vec3_mulf(other->velocity, 0.015625)); // >> 6
 
 	if (
@@ -1021,6 +996,12 @@ void ship_collide_with_ship(ship_t *self, ship_t *other) {
 		self->last_impact_time = 0;
 		vec3_t sound_pos = vec3_mulf(vec3_add(self->position, other->position), 0.5);
 		sfx_play_at(SFX_CRUNCH, sound_pos, vec3(0, 0, 0), 1);
+		
+		// HD Rumble feedback for ship collision
+		#if defined(PLATFORM_SWITCH)
+		float impact_intensity = min((self->speed + other->speed) / 3000.0f, 1.0f);
+		platform_rumble_strong_impact(impact_intensity);
+		#endif
 	}
 	flags_add(self->flags, SHIP_COLL);
 	flags_add(other->flags, SHIP_COLL);

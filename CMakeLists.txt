@@ -13,7 +13,7 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Emscripten")
 	set(EMSCRIPTEN true)
 endif()
 
-set(platform_options "SDL2" "SOKOL")
+set(platform_options "SDL2" "SOKOL" "SWITCH")
 set(PLATFORM "SDL2" CACHE STRING "Graphics platform to handle input/output")
 set_property(CACHE PLATFORM PROPERTY STRINGS "${platform_options}")
 if(NOT PLATFORM IN_LIST platform_options)
@@ -102,6 +102,10 @@ set(common_src
 	src/types.h
 	src/utils.c
 	src/utils.h
+	src/save_ini.c
+	src/save_ini.h
+	src/libs/ini.c
+	src/libs/ini.h
 
 	packaging/windows/wipeout.exe.manifest
 	packaging/windows/wipeout.rc
@@ -174,6 +178,39 @@ elseif(EMSCRIPTEN)
 	endif()
 
 	configure_file("${CMAKE_SOURCE_DIR}/src/wasm-index.html" "game.html" COPYONLY)
+elseif("${PLATFORM}" STREQUAL "SWITCH")
+	# Nintendo Switch specific configuration
+	target_compile_definitions(wipeout PRIVATE "PLATFORM_SWITCH")
+	target_compile_definitions(wipeout PRIVATE "USE_GLES2")
+	set(RENDERER "GLES2")
+	set(using_gl true)
+	
+	# Enable C++ for Switch (needed for EGL)
+	enable_language(CXX)
+	set_property(TARGET wipeout PROPERTY CXX_STANDARD 14)
+	
+	# Switch libraries
+	target_link_libraries(wipeout PUBLIC
+		nx
+		EGL
+		glad
+		glapi
+		drm_nouveau
+		stdc++
+	)
+	
+	# Set Switch-specific properties
+	nx_generate_nacp(wipeout.nacp
+		NAME "Wipeout Rewrite"
+		AUTHOR "Community Port"
+		VERSION "1.0.0"
+	)
+	
+	nx_create_nro(wipeout
+		NACP wipeout.nacp
+		ICON ${CMAKE_SOURCE_DIR}/packaging/switch/icon.jpg
+	)
+	
 elseif(UNIX)
 	target_link_libraries(wipeout PUBLIC m)
 	if ("${PLATFORM}" STREQUAL "SOKOL" AND "${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
@@ -209,7 +246,7 @@ if(using_gl)
 		target_link_libraries(wipeout PUBLIC OpenGL::GL)
 	endif()
 
-	if(NOT APPLE)
+	if(NOT APPLE AND NOT "${PLATFORM}" STREQUAL "SWITCH")
 		target_include_directories(wipeout PRIVATE ${GLEW_INCLUDE_DIRS})
 		target_link_libraries(wipeout PRIVATE GLEW::GLEW)
 	endif()
@@ -223,6 +260,8 @@ if("${PLATFORM}" STREQUAL SDL2)
 	target_link_libraries(wipeout PUBLIC SDL2::Main)
 elseif("${PLATFORM}" STREQUAL SOKOL)
 	target_sources(wipeout PRIVATE src/platform_sokol.c)
+elseif("${PLATFORM}" STREQUAL SWITCH)
+	target_sources(wipeout PRIVATE src/platform_switch.c)
 endif()
 
 install(TARGETS wipeout)

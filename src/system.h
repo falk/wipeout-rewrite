@@ -8,7 +8,7 @@
 #define SYSTEM_WINDOW_HEIGHT 720
 
 void system_init(void);
-void system_update(void);
+void system_update(double delta_time);
 void system_cleanup(void);
 void system_exit(void);
 void system_resize(vec2i_t size);

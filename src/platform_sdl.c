@@ -411,10 +411,15 @@ int main(int argc, char *argv[]) {
 	platform_video_init();
 	system_init();
 
+	double last_frame_time = platform_now();
 	while (!wants_to_exit) {
+		double current_time = platform_now();
+		double delta_time = current_time - last_frame_time;
+		last_frame_time = current_time;
+		
 		platform_pump_events();
 		platform_prepare_frame();
-		system_update();
+		system_update(delta_time);
 		platform_end_frame();
 	}
 

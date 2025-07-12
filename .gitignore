@@ -9,3 +9,5 @@
 /save.dat
 .DS_STORE
 gamecontrollerdb.txt
+build-switch/
+transfer_nro_to_switch.sh

@@ -17,13 +17,22 @@ typedef enum {
 typedef enum {
 	RENDER_POST_NONE,
 	RENDER_POST_CRT,
+	RENDER_POST_D_REP,
 	NUM_RENDER_POST_EFFCTS,
 } render_post_effect_t;
 
 #define RENDER_USE_MIPMAPS 1
 
-#define RENDER_FADEOUT_NEAR 48000.0
-#define RENDER_FADEOUT_FAR 64000.0
+// Nintendo Switch performance optimizations
+#ifdef PLATFORM_SWITCH
+    // Reduced draw distances for Switch's mobile GPU
+    #define RENDER_FADEOUT_NEAR 36000.0  // 25% closer than default
+    #define RENDER_FADEOUT_FAR 48000.0   // 25% closer than default
+    #define RENDER_SWITCH_LOD_DISTANCE 24000.0  // Additional LOD threshold
+#else
+    #define RENDER_FADEOUT_NEAR 48000.0
+    #define RENDER_FADEOUT_FAR 64000.0
+#endif
 
 extern uint16_t RENDER_NO_TEXTURE;
 
@@ -39,6 +48,7 @@ void render_frame_prepare(void);
 void render_frame_end(void);
 
 void render_set_view(vec3_t pos, vec3_t angles);
+void render_set_view_with_fov(vec3_t pos, vec3_t angles, float fov);
 void render_set_view_2d(void);
 void render_set_model_mat(mat4_t *m);
 void render_set_depth_write(bool enabled);

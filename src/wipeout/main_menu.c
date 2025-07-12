@@ -308,11 +308,31 @@ static void toggle_screen_shake(menu_t *menu, int data) {
 	save.is_dirty = true;
 }
 
+static void toggle_less_punishing_ship_collisions(menu_t *menu, int data) {
+	save.less_punishing_ship_collisions = data;
+	save.is_dirty = true;
+}
+
+static void toggle_wall_grinding_mode(menu_t *menu, int data) {
+	save.wall_grinding_mode = data;
+	save.is_dirty = true;
+}
+
+static void toggle_smart_weapon_displacement(menu_t *menu, int data) {
+	save.smart_weapon_displacement = data;
+	save.is_dirty = true;
+}
+
+static void toggle_engine_trails(menu_t *menu, int data) {
+	save.engine_trails = data;
+	save.is_dirty = true;
+}
+
 static const char *opts_off_on[] = {"OFF", "ON"};
 static const char *opts_roll[] = {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"};
 static const char *opts_ui_sizes[] = {"AUTO", "1X", "2X", "3X", "4X"};
 static const char *opts_res[] = {"NATIVE", "240P", "480P"};
-static const char *opts_post[] = {"NONE", "CRT EFFECT"};
+static const char *opts_post[] = {"NONE", "CRT EFFECT", "D_REP"};
 static const char *opts_screen_shake[] = {"DISABLED", "REDUCED", "FULL"};
 
 static void page_options_video_init(menu_t *menu) {
@@ -333,6 +353,10 @@ static void page_options_video_init(menu_t *menu) {
 	menu_page_add_toggle(page, save.show_fps, "SHOW FPS", opts_off_on, len(opts_off_on), toggle_show_fps);
 	menu_page_add_toggle(page, save.screen_res, "SCREEN RESOLUTION", opts_res, len(opts_res), toggle_res);
 	menu_page_add_toggle(page, save.post_effect, "POST PROCESSING", opts_post, len(opts_post), toggle_post);
+	menu_page_add_toggle(page, save.less_punishing_ship_collisions, "GENTLER SHIP COLLISIONS", opts_off_on, len(opts_off_on), toggle_less_punishing_ship_collisions);
+	menu_page_add_toggle(page, save.wall_grinding_mode, "WALL GRINDING MODE", opts_off_on, len(opts_off_on), toggle_wall_grinding_mode);
+	menu_page_add_toggle(page, save.smart_weapon_displacement, "SMART WEAPON SYSTEM", opts_off_on, len(opts_off_on), toggle_smart_weapon_displacement);
+	menu_page_add_toggle(page, save.engine_trails, "ENGINE TRAILS", opts_off_on, len(opts_off_on), toggle_engine_trails);
 }
 
 // -----------------------------------------------------------------------------
@@ -345,6 +369,11 @@ static void toggle_music_volume(menu_t *menu, int data) {
 
 static void toggle_sfx_volume(menu_t *menu, int data) {
 	save.sfx_volume = (float)data * 0.1;	
+	save.is_dirty = true;
+}
+
+static void toggle_tunnel_reverb(menu_t *menu, int data) {
+	save.tunnel_reverb_enabled = data;
 	save.is_dirty = true;
 }
 
@@ -362,6 +391,7 @@ static void page_options_audio_init(menu_t *menu) {
 
 	menu_page_add_toggle(page, save.music_volume * 10, "MUSIC VOLUME", opts_volume, len(opts_volume), toggle_music_volume);
 	menu_page_add_toggle(page, save.sfx_volume * 10, "SOUND EFFECTS VOLUME", opts_volume, len(opts_volume), toggle_sfx_volume);
+	menu_page_add_toggle(page, save.tunnel_reverb_enabled, "TUNNEL REVERB", opts_off_on, len(opts_off_on), toggle_tunnel_reverb);
 }
 
 // -----------------------------------------------------------------------------

@@ -280,10 +280,16 @@ Some things from the original game are not yet implemented in this rewrite. This
 - implement frustum culling for scene geometry, the track and ships. Currently everything within the fadeout radius is drawn.
 - put all static geometry into a GPU-side buffer. Currently all triangles are constructed at draw time. Uploading geometry is complicated a bit by the fact that some scene animations and the ship's exhaust need to update geometry for each frame.
 - the menu system is... not great. It's better than the 5000 lines of spaghetti that it was before, but the different layouts need a lot of `if`s
-- the save data is just dumping the whole struct on disk. A textual format would be preferable.
+- ~~the save data is just dumping the whole struct on disk. A textual format would be preferable.~~ ✅ Now uses human-readable INI format
 - since this whole thing is relying on some custom assembled assets anyway, maybe all SFX should be in QOA format too (like the music). Or switch everything to Vorbis.
 - a lot of functions assume that there's just one player. This needs to be fixed for a potential splitscreen mode.
 
+
+# Credits
+
+This project uses the following open source libraries:
+
+- **[inih](https://github.com/benhoyt/inih)** by Ben Hoyt - Simple .INI file parser used for the save system (BSD-3-Clause License)
 
 # License
 

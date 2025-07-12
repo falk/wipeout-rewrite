@@ -10,6 +10,10 @@ bool platform_get_fullscreen(void);
 void platform_set_fullscreen(bool fullscreen);
 void platform_set_audio_mix_cb(void (*cb)(float *buffer, uint32_t len));
 
+// HD Rumble functions (Nintendo Switch only)
+void platform_rumble_impact(float intensity, bool left_side);
+void platform_rumble_strong_impact(float intensity);
+
 FILE *platform_open_asset(const char *name, const char *mode);
 uint8_t *platform_load_asset(const char *name, uint32_t *bytes_read);
 uint8_t *platform_load_userdata(const char *name, uint32_t *bytes_read);

@@ -38,7 +38,7 @@ endif
 
 ifeq ($(UNAME_S), Darwin)
 	BREW_HOME := $(shell brew --prefix)
-	C_FLAGS := $(C_FLAGS) -x objective-c -I/opt/homebrew/include -D_THREAD_SAFE -w
+	C_FLAGS := $(C_FLAGS) -x objective-c -I/opt/homebrew/include -D_THREAD_SAFE -DGL_SILENCE_DEPRECATION
 	L_FLAGS := $(L_FLAGS) -L$(BREW_HOME)/lib -framework Foundation
 
 	ifeq ($(RENDERER), GL)
@@ -125,6 +125,8 @@ COMMON_SRC = \
 	src/system.c \
 	src/mem.c \
 	src/input.c \
+	src/save_ini.c \
+	src/libs/ini.c \
 	$(RENDERER_SRC)
 
 

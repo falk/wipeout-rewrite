@@ -58,6 +58,9 @@ typedef struct {
 #define SFX_MAX 64
 #define SFX_MAX_ACTIVE 16
 
+#define SFX_REVERB_BUFFER_SIZE 8192
+#define SFX_REVERB_DELAY_SAMPLES 2048
+
 void sfx_load(void);
 void sfx_stero_mix(float *buffer, uint32_t len);
 void sfx_set_external_mix_cb(void (*cb)(float *, uint32_t len));
@@ -81,5 +84,7 @@ void sfx_music_next(void);
 void sfx_music_play(uint32_t index);
 void sfx_music_mode(sfx_music_mode_t);
 void sfx_music_pause(void);
+
+void sfx_update_reverb(void);
 
 #endif
